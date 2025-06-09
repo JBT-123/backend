@@ -1,0 +1,6 @@
+[submodule "utils/datastructures/utils/datastructures/gods"]
+	path = utils/datastructures/utils/datastructures/gods
+	url = https://github.com/emirpasic/gods.git
+[submodule "utils/datastructures/utils/utils/datastructures/gods"]
+	path = utils/datastructures/utils/utils/datastructures/gods
+	url = https://github.com/emirpasic/gods.git
