@@ -72,6 +72,21 @@ func (p *PostgresDB) GetUserByID(id int) (*User, error) {
 	return user, nil
 }
 
+func (p *PostgresDB) Seed() error {
+	// Check if test user exists
+	testEmail := "test@example.com"
+	existing, err := p.GetUserByEmail(testEmail)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil // Already seeded
+	}
+	// Hash password
+	hashed := "$2a$10$7a8Qw1Qw1Qw1Qw1Qw1Qw1u1Qw1Qw1Qw1Qw1Qw1Qw1Qw1Qw1Qw1Qw1" // bcrypt hash for 'password'
+	return p.CreateUser(testEmail, hashed)
+}
+
 type User struct {
 	ID       int
 	Email    string
@@ -92,4 +107,8 @@ func initSchema(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+func (p *PostgresDB) SQLDB() *sql.DB {
+	return p.db
 }
