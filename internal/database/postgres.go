@@ -3,13 +3,14 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"os"
 
 	"github.com/How-to-get-ABG/backend/internal/config"
 	_ "github.com/lib/pq"
 )
 
 type PostgresDB struct {
-	*sql.DB
+	db *sql.DB
 }
 
 func NewPostgresDB(cfg *config.Config) (*PostgresDB, error) {
@@ -27,20 +28,68 @@ func NewPostgresDB(cfg *config.Config) (*PostgresDB, error) {
 		return nil, fmt.Errorf("error connecting to the database: %v", err)
 	}
 
-	return &PostgresDB{db}, nil
+	// Initialize schema
+	if err := initSchema(db); err != nil {
+		return nil, fmt.Errorf("error initializing schema: %v", err)
+	}
+
+	return &PostgresDB{db: db}, nil
 }
 
-// CreateTables creates the necessary tables if they don't exist
-func (db *PostgresDB) CreateTables() error {
-	query := `
-	CREATE TABLE IF NOT EXISTS users (
-		id SERIAL PRIMARY KEY,
-		email VARCHAR(255) UNIQUE NOT NULL,
-		password_hash VARCHAR(255) NOT NULL,
-		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-	);`
+func (p *PostgresDB) Close() error {
+	return p.db.Close()
+}
 
-	_, err := db.Exec(query)
+func (p *PostgresDB) CreateUser(email, hashedPassword string) error {
+	query := `INSERT INTO users (email, password) VALUES ($1, $2)`
+	_, err := p.db.Exec(query, email, hashedPassword)
 	return err
+}
+
+func (p *PostgresDB) GetUserByEmail(email string) (*User, error) {
+	query := `SELECT id, email, password FROM users WHERE email = $1`
+	user := &User{}
+	err := p.db.QueryRow(query, email).Scan(&user.ID, &user.Email, &user.Password)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+func (p *PostgresDB) GetUserByID(id int) (*User, error) {
+	query := `SELECT id, email, password FROM users WHERE id = $1`
+	user := &User{}
+	err := p.db.QueryRow(query, id).Scan(&user.ID, &user.Email, &user.Password)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+type User struct {
+	ID       int
+	Email    string
+	Password string
+}
+
+func initSchema(db *sql.DB) error {
+	// Read schema file
+	schemaSQL, err := os.ReadFile("internal/database/schema.sql")
+	if err != nil {
+		return fmt.Errorf("error reading schema file: %v", err)
+	}
+
+	// Execute schema
+	_, err = db.Exec(string(schemaSQL))
+	if err != nil {
+		return fmt.Errorf("error executing schema: %v", err)
+	}
+
+	return nil
 }

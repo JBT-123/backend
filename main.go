@@ -29,6 +29,10 @@ func main() {
 	}
 	defer db.Close()
 
+	// Initialize handlers and middleware
+	handlers.InitHandlers(db, cfg)
+	middleware.InitMiddleware(cfg)
+
 	// Initialize router
 	router := mux.NewRouter()
 

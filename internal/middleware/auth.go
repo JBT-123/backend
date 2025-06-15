@@ -1,9 +1,19 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"strings"
+
+	"github.com/How-to-get-ABG/backend/internal/config"
+	"github.com/dgrijalva/jwt-go"
 )
+
+var cfg *config.Config
+
+func InitMiddleware(config *config.Config) {
+	cfg = config
+}
 
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -19,21 +29,26 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// token, err := jwt.Parse(bearerToken[1], func(token *jwt.Token) (interface{}, error) {
-		// 	//TODO: Set up JWT secret from config
-		// 	return []byte("your_jwt_secret"), nil
-		// })
+		token, err := jwt.Parse(bearerToken[1], func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, jwt.ErrSignatureInvalid
+			}
+			return []byte(cfg.JWTSecret), nil
+		})
 
-		// if err != nil {
-		// 	http.Error(w, "Invalid token", http.StatusUnauthorized)
-		// 	return
-		// }
+		if err != nil {
+			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			return
+		}
 
-		// Add user info to request context
-		// claims := token.Claims.(jwt.MapClaims)
-		// TODO: Add user to context
-		// r = r.WithContext(context.WithValue(r.Context(), "user", claims))
-
-		next.ServeHTTP(w, r)
+		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+			// Add user info to request context
+			ctx := context.WithValue(r.Context(), "user_id", int(claims["user_id"].(float64)))
+			ctx = context.WithValue(ctx, "email", claims["email"].(string))
+			next.ServeHTTP(w, r.WithContext(ctx))
+		} else {
+			http.Error(w, "Invalid token claims", http.StatusUnauthorized)
+			return
+		}
 	})
 }

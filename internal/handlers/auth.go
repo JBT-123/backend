@@ -5,14 +5,26 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/How-to-get-ABG/backend/internal/config"
+	"github.com/How-to-get-ABG/backend/internal/database"
 	"github.com/dgrijalva/jwt-go"
 	"golang.org/x/crypto/bcrypt"
 )
 
+var (
+	db  *database.PostgresDB
+	cfg *config.Config
+)
+
+func InitHandlers(database *database.PostgresDB, config *config.Config) {
+	db = database
+	cfg = config
+}
+
 type User struct {
 	ID       int    `json:"id"`
 	Email    string `json:"email"`
-	Password string `json:"password"`
+	Password string `json:"-"` // Password is not included in JSON responses
 }
 
 type LoginRequest struct {
@@ -37,22 +49,44 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if user already exists
+	existingUser, err := db.GetUserByEmail(req.Email)
+	if err != nil {
+		http.Error(w, "Error checking user existence", http.StatusInternalServerError)
+		return
+	}
+	if existingUser != nil {
+		http.Error(w, "User already exists", http.StatusConflict)
+		return
+	}
+
+	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, "Error processing password", http.StatusInternalServerError)
 		return
 	}
 
-	user := User{
-		Email:    req.Email,
-		Password: string(hashedPassword),
+	// Create user in database
+	if err := db.CreateUser(req.Email, string(hashedPassword)); err != nil {
+		http.Error(w, "Error creating user", http.StatusInternalServerError)
+		return
+	}
+
+	// Get the created user
+	user, err := db.GetUserByEmail(req.Email)
+	if err != nil {
+		http.Error(w, "Error retrieving created user", http.StatusInternalServerError)
+		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(user)
+	json.NewEncoder(w).Encode(User{
+		ID:    user.ID,
+		Email: user.Email,
+	})
 }
 
-// TODO: Add user to database
 func Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -60,13 +94,31 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//TODO: Verify user credentials with database
+	// Get user from database
+	user, err := db.GetUserByEmail(req.Email)
+	if err != nil {
+		http.Error(w, "Error retrieving user", http.StatusInternalServerError)
+		return
+	}
+	if user == nil {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	// Verify password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	// Generate JWT token
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"email": req.Email,
-		"exp":   time.Now().Add(time.Hour * 72).Unix(),
+		"user_id": user.ID,
+		"email":   user.Email,
+		"exp":     time.Now().Add(time.Hour * 72).Unix(),
 	})
 
-	tokenString, err := token.SignedString([]byte("your-secret-key"))
+	tokenString, err := token.SignedString([]byte(cfg.JWTSecret))
 	if err != nil {
 		http.Error(w, "Error generating token", http.StatusInternalServerError)
 		return
@@ -75,7 +127,9 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	response := AuthResponse{
 		Token: tokenString,
 		User: User{
-			Email: req.Email},
+			ID:    user.ID,
+			Email: user.Email,
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -83,13 +137,23 @@ func Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetUserProfile(w http.ResponseWriter, r *http.Request) {
-	//TODO: Get user from database using the token
-	// Currently using mock response
-	user := User{
-		ID:    1,
-		Email: "Test@gmail.com",
+	// Get user ID from context (set by middleware)
+	userID := r.Context().Value("user_id").(int)
+
+	// Get user from database
+	user, err := db.GetUserByID(userID)
+	if err != nil {
+		http.Error(w, "Error retrieving user", http.StatusInternalServerError)
+		return
+	}
+	if user == nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(user)
+	json.NewEncoder(w).Encode(User{
+		ID:    user.ID,
+		Email: user.Email,
+	})
 }
