@@ -102,10 +102,15 @@ func main() {
 
 	router.HandleFunc("/api/register", handlers.Register).Methods("POST")
 	router.HandleFunc("/api/login", handlers.Login).Methods("POST")
+	router.HandleFunc("/api/connect", handlers.Connect).Methods("GET")
+
 
 	protected := router.PathPrefix("/api").Subrouter()
 	protected.Use(middleware.AuthMiddleware)
 	protected.HandleFunc("/me", handlers.GetUserProfile).Methods("GET")
+	protected.HandleFunc("/updateUser", handlers.UpdateUserInfo).Methods("PATCH") //change to protected later as im lzy to input jwt in header\
+	protected.HandleFunc("/updateUserPref", handlers.UpdateUserPref).Methods("PATCH") //change to protected later as im lzy to input jwt in header\
+
 
 	port := os.Getenv("PORT")
 	if port == "" {

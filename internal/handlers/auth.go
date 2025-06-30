@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/How-to-get-ABG/backend/internal/config"
 	"github.com/How-to-get-ABG/backend/internal/database"
+	"github.com/How-to-get-ABG/backend/internal/models"
 	"github.com/dgrijalva/jwt-go"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -21,29 +23,8 @@ func InitHandlers(database *database.PostgresDB, config *config.Config) {
 	cfg = config
 }
 
-type User struct {
-	ID       int    `json:"id"`
-	Email    string `json:"email"`
-	Password string `json:"-"` // Password is not included in JSON responses
-}
-
-type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-type RegisterRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-type AuthResponse struct {
-	Token string `json:"token"`
-	User  User   `json:"user"`
-}
-
 func Register(w http.ResponseWriter, r *http.Request) {
-	var req RegisterRequest
+	var req models.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -59,7 +40,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "User already exists", http.StatusConflict)
 		return
 	}
-
+	
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -67,8 +48,10 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	username:= fmt.Sprintf("guest_%d", time.Now().Unix())
+
 	// Create user in database
-	if err := db.CreateUser(req.Email, string(hashedPassword)); err != nil {
+	if err := db.CreateUser(req.Email, string(hashedPassword), username); err != nil {
 		http.Error(w, "Error creating user", http.StatusInternalServerError)
 		return
 	}
@@ -81,14 +64,14 @@ func Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(User{
+	json.NewEncoder(w).Encode(models.User{
 		ID:    user.ID,
 		Email: user.Email,
 	})
 }
 
 func Login(w http.ResponseWriter, r *http.Request) {
-	var req LoginRequest
+	var req models.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -124,9 +107,9 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := AuthResponse{
+	response := models.AuthResponse{
 		Token: tokenString,
-		User: User{
+		User: models.User{
 			ID:    user.ID,
 			Email: user.Email,
 		},
@@ -152,7 +135,7 @@ func GetUserProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(User{
+	json.NewEncoder(w).Encode(models.User{
 		ID:    user.ID,
 		Email: user.Email,
 	})

@@ -2,10 +2,13 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/How-to-get-ABG/backend/internal/config"
+	"github.com/How-to-get-ABG/backend/internal/models"
 	_ "github.com/lib/pq"
 )
 
@@ -40,9 +43,15 @@ func (p *PostgresDB) Close() error {
 	return p.db.Close()
 }
 
-func (p *PostgresDB) CreateUser(email, hashedPassword string) error {
-	query := `INSERT INTO users (email, password) VALUES ($1, $2)`
-	_, err := p.db.Exec(query, email, hashedPassword)
+func (p *PostgresDB) CreateUser(email, hashedPassword, username string) error {
+	var id int;
+	query := `INSERT INTO users (email, password, username) VALUES ($1, $2, $3) RETURNING id`
+	err := p.db.QueryRow(query, email, hashedPassword, username).Scan(&id)
+	if err != nil {
+		fmt.Println("Problem retrieving id", err)
+	}
+	query = `INSERT INTO preferences (user_id) VALUES ($1)`
+	_, err = p.db.Exec(query, id)
 	return err
 }
 
@@ -84,7 +93,7 @@ func (p *PostgresDB) Seed() error {
 	}
 	// Hash password
 	hashed := "$2a$10$7a8Qw1Qw1Qw1Qw1Qw1Qw1u1Qw1Qw1Qw1Qw1Qw1Qw1Qw1Qw1Qw1Qw1" // bcrypt hash for 'password'
-	return p.CreateUser(testEmail, hashed)
+	return p.CreateUser(testEmail, hashed, "nil")
 }
 
 type User struct {
@@ -100,15 +109,125 @@ func initSchema(db *sql.DB) error {
 		return fmt.Errorf("error reading schema file: %v", err)
 	}
 
-	// Execute schema
-	_, err = db.Exec(string(schemaSQL))
-	if err != nil {
-		return fmt.Errorf("error executing schema: %v", err)
+	statements := strings.Split(string(schemaSQL), ";")
+
+    for _, stmt := range statements {
+        stmt = strings.TrimSpace(stmt)
+        if stmt == "" {
+            continue
+        }
+        _, err := db.Exec(stmt)
+        if err != nil {
+            return fmt.Errorf("error executing statement %q: %v", stmt, err)
+        }
+    }
+
+    return nil
+}
+
+func (p *PostgresDB) SQLDB() *sql.DB {
+	return p.db
+}
+
+
+func (p *PostgresDB) UpdateUserDB(i *models.UserInfo, id int) error {
+	b, _ := json.Marshal(i)
+	var m map[string]interface{}
+	json.Unmarshal(b, &m)
+
+	for key, val := range m {
+		if val == "" || val == nil {
+			continue
+		}
+
+		query := fmt.Sprintf(`
+			UPDATE users
+			SET %s = $1
+			WHERE id = $2
+		`, key)
+
+		_, err := p.db.Exec(query, val, id)
+		if err != nil {
+			fmt.Println("Error updating db:", err)
+			return err
+		}
 	}
 
 	return nil
 }
 
-func (p *PostgresDB) SQLDB() *sql.DB {
-	return p.db
+func (p *PostgresDB) UpdateUserPref(i *models.UserPref, id int) error{
+	b, _ := json.Marshal(i)
+	var m map[string]any
+	json.Unmarshal(b, &m)
+
+	for key, val := range m {
+		if val == "" || val == nil {
+			continue
+		}
+
+		query := fmt.Sprintf(`
+			UPDATE preferences
+			SET %s = $1
+			WHERE user_id = $2
+		`, key)
+
+		_, err := p.db.Exec(query, val, id)
+		if err != nil {
+			fmt.Println("Error updating db:", err)
+			return err
+		}
+	}
+
+	return nil
+}
+//models.UserConnectionRes
+func (p *PostgresDB) UserLinkedPref(id int) ([]*models.UserConnectionRes, error){
+	query:= `SELECT preferred_genders, interests FROM preferences WHERE user_id = $1`
+	pref:=&models.UserPref{};
+	err:= p.db.QueryRow(query, id).Scan(&pref.PrefGender, &pref.Interest)
+	if err!=nil{
+		fmt.Println("An error has occured: ", err)
+		return nil, err
+	}
+	query= `
+        SELECT  u.username, u.first_name, u.last_name, u.gender, u.birthdate, u.bio, u.profile_pic_url
+        FROM users u
+        JOIN preferences pref ON u.id = pref.user_id
+        WHERE pref.preferred_genders = $1 AND pref.interests = $2
+    `
+	userInfo:=[]*models.UserConnectionRes{};
+	rows, err:= p.db.Query(query, pref.PrefGender, pref.Interest)
+	 if err != nil {
+            fmt.Println("Err in query:", err)
+            return nil, err
+        }
+	defer rows.Close()
+	for rows.Next(){
+		var user models.UserConnectionRes
+
+        err := rows.Scan(
+            &user.UserInfo.Username,
+            &user.UserInfo.FirstName,
+            &user.UserInfo.LastName,
+            &user.UserInfo.Gender,
+            &user.UserInfo.BirthDate,
+            &user.UserInfo.Bio,
+            &user.UserInfo.ProfilePicUrl,
+        )
+		if err = rows.Err(); err != nil {
+		fmt.Println("Row iteration error:", err)
+		return nil, err
+	}
+        // You can fill UserPref here if needed (you already know prefGender and interests)
+        user.UserPref.PrefGender = pref.PrefGender
+        user.UserPref.Interest = pref.Interest
+        userInfo = append(userInfo, &user)
+    }
+	
+	if err!=nil{
+		fmt.Println("An error has occured: ", err)
+		return nil, err
+	}
+	return userInfo, nil
 }
